@@ -161,4 +161,4 @@ def test_chunk_indexer_getitem_c(benchmark):
 
     def do_gets(keys=keys):
         bench_getitem(index, keys, len(keys)//32)
-    benchmark.pedantic(do_gets, rounds=50)
+    benchmark.pedantic(do_gets, rounds=1)

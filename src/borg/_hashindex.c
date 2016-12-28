@@ -108,6 +108,8 @@ hashindex_index(HashIndex *index, const void *key)
     return _le32toh(*((uint32_t *)key)) % index->num_buckets;
 }
 
+static long unsigned lookups = 0;
+
 static int
 hashindex_lookup(HashIndex *index, const void *key, int *skip_hint)
 {
@@ -116,6 +118,7 @@ hashindex_lookup(HashIndex *index, const void *key, int *skip_hint)
     int idx = start;
     int offset;
     for(offset=0; ; offset++) {
+      lookups ++;
         if (skip_hint != NULL) {
             (*skip_hint) = offset;
         }
@@ -457,16 +460,10 @@ static void
 benchmark_getitem(HashIndex *index, char *keys, int key_count)
 {
   char *key = keys;
-  unsigned long hits = 0;
-  unsigned long misses = 0;
   char *last_addr = key + (32 * key_count);
   while (key < last_addr) {
-    if (hashindex_get(index, key) != NULL) {
-      hits += 1;
-    } else {
-      misses += 1;
-    }
+    hashindex_get(index, key);
     key += 32;
   }
-  /* printf("hits %lud\nmisses %lud\n", hits, misses); */
+  printf("\n\n\nlookups %f\n\n\n", (double)(lookups) / key_count);
 }
