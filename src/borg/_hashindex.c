@@ -465,5 +465,34 @@ benchmark_getitem(HashIndex *index, char *keys, int key_count)
     hashindex_get(index, key);
     key += 32;
   }
-  printf("\n\n\nlookups %f\n\n\n", (double)(lookups) / key_count);
+  //  printf("\n\n\nlookups %f\n\n\n", (double)(lookups) / key_count);
+}
+
+static void
+benchmark_setitem(HashIndex *index, char *keys, int key_count)
+{
+  char *key = keys;
+  char *last_addr = key + (32 * key_count);
+  uint32_t data[3] = {0, 0, 0};
+  while (key < last_addr) {
+    hashindex_set(index, key, data);
+    key += 32;
+  }
+  data[0] = 1;
+  data[1] = 1;
+  data[2] = 1;
+  key = keys;
+  while (key < last_addr) {
+    hashindex_set(index, key, data);
+     key += 32;
+   }
+  data[0] = 2;
+  data[1] = 2;
+  data[2] = 2;
+  key = keys;
+  while (key < last_addr) {
+    hashindex_set(index, key, data);
+    key += 32;
+  }
+
 }

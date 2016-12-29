@@ -17,6 +17,7 @@ from .hashindex import H
 import borg.hashindex
 
 bench_getitem = borg.hashindex.bench_getitem
+bench_setitem = borg.hashindex.bench_setitem
 
 
 @pytest.yield_fixture
@@ -161,4 +162,15 @@ def test_chunk_indexer_getitem_c(benchmark):
 
     def do_gets(keys=keys):
         bench_getitem(index, keys, len(keys)//32)
-    benchmark.pedantic(do_gets, rounds=1)
+    benchmark.pedantic(do_gets, rounds=200)
+
+
+def test_chunk_indexer_setitem_c(benchmark):
+    max_key = int(445649 * 0.93 - 10)
+    index = ChunkIndex(max_key)
+    keys = b"".join((sha256(H(k)).digest()
+            for k in range(max_key)))
+
+    def do_sets(keys=keys):
+        bench_setitem(index, keys, len(keys)//32)
+    benchmark.pedantic(do_sets, rounds=200)
