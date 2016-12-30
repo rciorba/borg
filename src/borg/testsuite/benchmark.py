@@ -147,10 +147,16 @@ def test_chunk_indexer_getitem(benchmark):
     benchmark.pedantic(do_gets, rounds=200)
 
 
+rounds = 50
+
+
 def test_chunk_indexer_getitem_c(benchmark):
     max_key = int(445649 * 0.93 - 10)
     index = ChunkIndex(max_key)
-    keys = [sha256(H(k)).digest() for k in range(max_key)]
+    # keys = [b'00'+sha256(H(k)).digest()[2:-2]+b'00'
+    #  for k in range(max_key)]
+    keys = [sha256(H(k)).digest()
+     for k in range(max_key)]
     bucket_val = (0, 0, 0)
     for key in keys:
         # we want 32 byte keys, since that's what we use day to day
@@ -162,15 +168,37 @@ def test_chunk_indexer_getitem_c(benchmark):
 
     def do_gets(keys=keys):
         bench_getitem(index, keys, len(keys)//32)
-    benchmark.pedantic(do_gets, rounds=200)
+    benchmark.pedantic(do_gets, rounds=rounds)
 
 
-def test_chunk_indexer_setitem_c(benchmark):
+def test_chunk_indexer_setitem_c_update(benchmark):
     max_key = int(445649 * 0.93 - 10)
     index = ChunkIndex(max_key)
     keys = b"".join((sha256(H(k)).digest()
             for k in range(max_key)))
+    bucket_val = (0, 0, 0)
+    for i in range(0, 32*max_key, 32):
+        key = keys[i:i+32]
+        index[key] = bucket_val
 
-    def do_sets(keys=keys):
+    def do_sets():
         bench_setitem(index, keys, len(keys)//32)
-    benchmark.pedantic(do_sets, rounds=200)
+    benchmark.pedantic(do_sets, rounds=rounds)
+
+
+def test_chunk_indexer_setitem_c(benchmark):
+    max_key = int(445649 * 0.93 - 10)
+    keys = b"".join((sha256(H(k)).digest()
+                     for k in range(max_key)))
+    def setup():
+        # return *args, **kwargs for the benchmarked function
+        index = ChunkIndex(max_key)
+        bucket_val = (5, 5, 5)
+        for i in range(0, 32*max_key, 32):
+            key = keys[i:i+32]
+            index[key] = bucket_val
+        return [ChunkIndex(max_key), ], dict()
+
+    def do_sets(index):
+        bench_setitem(index, keys, len(keys)//32)
+    benchmark.pedantic(do_sets, rounds=rounds, setup=setup)
