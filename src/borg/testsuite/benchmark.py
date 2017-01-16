@@ -171,7 +171,7 @@ def test_chunk_indexer_c_getitem(benchmark, fill):
     keys = b"".join(keys)
 
     def do_gets(keys=keys):
-        bench_getitem(index, keys, len(keys)//32)
+        bench_getitem(index, keys)
     # import yep
     # yep.start('getitem.perf')
     benchmark.pedantic(do_gets, rounds=rounds)
@@ -193,7 +193,7 @@ def test_chunk_indexer_c_getitem_with_misses(benchmark, fill):
     keys = b"".join(keys) + missing_keys
 
     def do_gets(keys=keys):
-        bench_getitem(index, keys, len(keys)//32)
+        bench_getitem(index, keys)
     benchmark.pedantic(do_gets, rounds=rounds)
 
 
@@ -208,7 +208,7 @@ def test_chunk_indexer_c_setitem_update(benchmark, fill):
         index[key] = bucket_val
 
     def do_sets():
-        bench_setitem(index, keys, len(keys)//32)
+        bench_setitem(index, keys)
     # import yep
     # yep.start('setitem.perf')
     benchmark.pedantic(do_sets, rounds=rounds)
@@ -229,7 +229,7 @@ def test_chunk_indexer_c_setitem(benchmark, fill):
         return [ChunkIndex(max_key), ], dict()
 
     def do_sets(index):
-        bench_setitem(index, keys, len(keys)//32)
+        bench_setitem(index, keys)
     benchmark.pedantic(do_sets, rounds=rounds, setup=setup)
 
 
@@ -249,7 +249,7 @@ def test_chunk_indexer_c_delete(benchmark, fill):
         return [ChunkIndex(max_key), ], dict()
 
     def do_delete(index):
-        bench_delete(index, delete_keys, len(keys)//32)
+        bench_delete(index, delete_keys)
     benchmark.pedantic(do_delete, rounds=rounds, setup=setup)
 
 
@@ -276,7 +276,7 @@ def test_chunk_indexer_c_setitem_after_deletion(benchmark, fill):
         return [ChunkIndex(max_key), ], dict()
 
     def do_sets(index):
-        bench_setitem(index, keys, len(keys)//32)
+        bench_setitem(index, keys)
     benchmark.pedantic(do_sets, rounds=rounds, setup=setup)
 
 
@@ -294,5 +294,5 @@ def test_chunk_indexer_c_churn(benchmark, fill):
         return [ChunkIndex(max_key), ], dict()
 
     def do_sets(index):
-        bench_churn(index, keys, len(keys)//32)
+        bench_churn(index, keys)
     benchmark.pedantic(do_sets, rounds=rounds, setup=setup)
