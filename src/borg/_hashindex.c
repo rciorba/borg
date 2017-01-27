@@ -139,7 +139,11 @@ hashindex_lookup(HashIndex *index, const void *key, int *skip_hint)
             }
             return idx;
         }
-        idx = (idx + 1) % index->num_buckets;
+        /* idx = (idx + 1) % index->num_buckets; */
+        idx ++;
+        if (idx >= index->num_buckets) {
+            idx = 0;
+        }
         if(idx == start) {
             return -1;
         }
@@ -397,9 +401,17 @@ hashindex_set(HashIndex *index, const void *key, const void *value)
             }
             offset = 0;
         }
-        idx = (hashindex_index(index, key) + offset) % index->num_buckets;
+        /* idx = (hashindex_index(index, key) + offset) % index->num_buckets; */
+        idx = hashindex_index(index, key) + offset;
+        if (idx >= index->num_buckets){
+            idx = idx - index->num_buckets;
+        }
         while(!BUCKET_IS_EMPTY(index, idx) && !BUCKET_IS_DELETED(index, idx)) {
-            idx = (idx + 1) % index->num_buckets;
+            /* idx = (idx + 1) % index->num_buckets; */
+            idx += 1;
+            if (idx >= index->num_buckets){
+                idx = idx - index->num_buckets;
+            }
         }
         ptr = BUCKET_ADDR(index, idx);
         memcpy(ptr, key, index->key_size);
