@@ -108,7 +108,7 @@ hashindex_index(HashIndex *index, const void *key)
     return _le32toh(*((uint32_t *)key)) % index->num_buckets;
 }
 
-static long unsigned lookups = 0;
+/* static long unsigned lookups = 0; */
 
 static int
 hashindex_lookup(HashIndex *index, const void *key, int *skip_hint)
@@ -118,7 +118,7 @@ hashindex_lookup(HashIndex *index, const void *key, int *skip_hint)
     int idx = start;
     int offset;
     for(offset=0; ; offset++) {
-      lookups ++;
+      /* lookups ++; */
         if (skip_hint != NULL) {
             (*skip_hint) = offset;
         }
