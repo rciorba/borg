@@ -111,20 +111,16 @@ hashindex_index(HashIndex *index, const void *key)
 /* static long unsigned lookups = 0; */
 
 static int
-hashindex_lookup(HashIndex *index, const void *key, int *skip_hint)
+hashindex_lookup(HashIndex *index, const void *key, int *start_hint)
 {
     int didx = -1;
     int start = hashindex_index(index, key);
     int idx = start;
-    int offset;
-    for(offset=0; ; offset++) {
+    for(;;) {
       /* lookups ++; */
-        if (skip_hint != NULL) {
-            (*skip_hint) = offset;
-        }
         if(BUCKET_IS_EMPTY(index, idx))
         {
-            return -1;
+            break;
         }
         if(BUCKET_IS_DELETED(index, idx)) {
             if(didx == -1) {
@@ -141,9 +137,13 @@ hashindex_lookup(HashIndex *index, const void *key, int *skip_hint)
         }
         idx = (idx + 1) % index->num_buckets;
         if(idx == start) {
-            return -1;
+            break;
         }
     }
+    if (start_hint != NULL) {
+        (*start_hint) = (didx == -1) ? idx : didx;
+    }
+    return -1;
 }
 
 static int
@@ -386,8 +386,8 @@ hashindex_get(HashIndex *index, const void *key)
 static int
 hashindex_set(HashIndex *index, const void *key, const void *value)
 {
-    int offset = 0;
-    int idx = hashindex_lookup(index, key, &offset);
+    int start_addr;
+    int idx = hashindex_lookup(index, key, &start_addr);
     uint8_t *ptr;
     if(idx < 0)
     {
@@ -395,9 +395,9 @@ hashindex_set(HashIndex *index, const void *key, const void *value)
             if(!hashindex_resize(index, grow_size(index->num_buckets))) {
                 return 0;
             }
-            offset = 0;
+            start_addr = hashindex_index(index, key);
         }
-        idx = (hashindex_index(index, key) + offset) % index->num_buckets;
+        idx = start_addr;
         while(!BUCKET_IS_EMPTY(index, idx) && !BUCKET_IS_DELETED(index, idx)) {
             idx = (idx + 1) % index->num_buckets;
         }
