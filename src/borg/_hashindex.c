@@ -36,12 +36,13 @@ typedef struct {
 } __attribute__((__packed__)) HashHeader;
 
 typedef struct {
-    void *buckets;
+    void *keys;
+    void *values;
     int num_entries;
     int num_buckets;
     int key_size;
     int value_size;
-    off_t bucket_size;
+    /* off_t bucket_size; */
     int lower_limit;
     int upper_limit;
 } HashIndex;
@@ -76,15 +77,16 @@ static int hash_sizes[] = {
 #define EMPTY _htole32(0xffffffff)
 #define DELETED _htole32(0xfffffffe)
 
-#define BUCKET_ADDR(index, idx) (index->buckets + (idx * index->bucket_size))
+#define KEY_ADDR(index, idx) (index->keys + ((idx) * index->key_size))
+#define VALUE_ADDR(index, idx) (index->values + ((idx) * index->value_size))
 
-#define BUCKET_MATCHES_KEY(index, idx, key) (memcmp(key, BUCKET_ADDR(index, idx), index->key_size) == 0)
+#define BUCKET_MATCHES_KEY(index, idx, key) (memcmp(key, KEY_ADDR(index, idx), index->key_size) == 0)
 
-#define BUCKET_IS_DELETED(index, idx) (*((uint32_t *)(BUCKET_ADDR(index, idx) + index->key_size)) == DELETED)
-#define BUCKET_IS_EMPTY(index, idx) (*((uint32_t *)(BUCKET_ADDR(index, idx) + index->key_size)) == EMPTY)
+#define BUCKET_IS_DELETED(index, idx) (*((uint32_t *)VALUE_ADDR(index, idx)) == DELETED)
+#define BUCKET_IS_EMPTY(index, idx) (*((uint32_t *)VALUE_ADDR(index, idx)) == EMPTY)
 
-#define BUCKET_MARK_DELETED(index, idx) (*((uint32_t *)(BUCKET_ADDR(index, idx) + index->key_size)) = DELETED)
-#define BUCKET_MARK_EMPTY(index, idx) (*((uint32_t *)(BUCKET_ADDR(index, idx) + index->key_size)) = EMPTY)
+#define BUCKET_MARK_DELETED(index, idx) (*((uint32_t *)VALUE_ADDR(index, idx)) = DELETED)
+#define BUCKET_MARK_EMPTY(index, idx) (*((uint32_t *)VALUE_ADDR(index, idx)) = EMPTY)
 
 #define EPRINTF_MSG(msg, ...) fprintf(stderr, "hashindex: " msg "\n", ##__VA_ARGS__)
 #define EPRINTF_MSG_PATH(path, msg, ...) fprintf(stderr, "hashindex: %s: " msg "\n", path, ##__VA_ARGS__)
@@ -97,7 +99,7 @@ static HashIndex *hashindex_init(int capacity, int key_size, int value_size);
 static const void *hashindex_get(HashIndex *index, const void *key);
 static int hashindex_set(HashIndex *index, const void *key, const void *value);
 static int hashindex_delete(HashIndex *index, const void *key);
-static void *hashindex_next_key(HashIndex *index, const void *key);
+static int hashindex_next_index(HashIndex *index, int idx);
 
 /* Private API */
 static void hashindex_free(HashIndex *index);
@@ -129,7 +131,8 @@ hashindex_lookup(HashIndex *index, const void *key, int *start_hint)
         }
         else if(BUCKET_MATCHES_KEY(index, idx, key)) {
             if (didx != -1) {
-                memcpy(BUCKET_ADDR(index, didx), BUCKET_ADDR(index, idx), index->bucket_size);
+                memcpy(KEY_ADDR(index, didx), KEY_ADDR(index, idx), index->key_size);
+                memcpy(VALUE_ADDR(index, didx), VALUE_ADDR(index, idx), index->value_size);
                 BUCKET_MARK_DELETED(index, idx);
                 idx = didx;
             }
@@ -151,24 +154,35 @@ hashindex_lookup(HashIndex *index, const void *key, int *start_hint)
 }
 
 static int
+hashindex_get_idx(HashIndex *index, const void *key) {
+    return hashindex_lookup(index, key, NULL);
+}
+
+
+static int
 hashindex_resize(HashIndex *index, int capacity)
 {
     HashIndex *new;
-    void *key = NULL;
+    /* void *key = NULL; */
+    int idx = 0;
     int32_t key_size = index->key_size;
 
     if(!(new = hashindex_init(capacity, key_size, index->value_size))) {
         return 0;
     }
-    while((key = hashindex_next_key(index, key))) {
-        if(!hashindex_set(new, key, key + key_size)) {
+    /* while ((key = hashindex_next_key(index, key))) */
+    while (1) {
+      idx = hashindex_next_index(index, idx);
+      if(!hashindex_set(new, KEY_ADDR(index, idx), VALUE_ADDR(index, idx))) {
             /* This can only happen if there's a bug in the code calculating capacity */
             hashindex_free(new);
             return 0;
         }
     }
-    free(index->buckets);
-    index->buckets = new->buckets;
+    free(index->keys);
+    free(index->values);
+    index->keys = new->keys;
+    index->values = new->values;
     index->num_buckets = new->num_buckets;
     index->lower_limit = new->lower_limit;
     index->upper_limit = new->upper_limit;
@@ -274,13 +288,15 @@ hashindex_read(const char *path)
         EPRINTF_PATH(path, "malloc header failed");
         goto fail;
     }
-    if(!(index->buckets = malloc(buckets_length))) {
+    if(!(index->keys = malloc(buckets_length))) {
         EPRINTF_PATH(path, "malloc buckets failed");
         free(index);
         index = NULL;
         goto fail;
     }
-    bytes_read = fread(index->buckets, 1, buckets_length, fd);
+    index->values = index->keys + (header.key_size * header.num_buckets);
+
+    bytes_read = fread(index->keys, 1, buckets_length, fd);
     if(bytes_read != buckets_length) {
         if(ferror(fd)) {
             EPRINTF_PATH(path, "fread buckets failed (expected %ju, got %ju)",
@@ -290,7 +306,7 @@ hashindex_read(const char *path)
             EPRINTF_MSG_PATH(path, "fread buckets failed (expected %ju, got %ju)",
                              (uintmax_t) buckets_length, (uintmax_t) bytes_read);
         }
-        free(index->buckets);
+        free(index->keys);
         free(index);
         index = NULL;
         goto fail;
@@ -299,7 +315,6 @@ hashindex_read(const char *path)
     index->num_buckets = _le32toh(header.num_buckets);
     index->key_size = header.key_size;
     index->value_size = header.value_size;
-    index->bucket_size = index->key_size + index->value_size;
     index->lower_limit = get_lower_limit(index->num_buckets);
     index->upper_limit = get_upper_limit(index->num_buckets);
 fail:
@@ -320,16 +335,16 @@ hashindex_init(int capacity, int key_size, int value_size)
         EPRINTF("malloc header failed");
         return NULL;
     }
-    if(!(index->buckets = calloc(capacity, key_size + value_size))) {
+    if(!(index->keys = calloc(capacity, key_size + value_size))) {
         EPRINTF("malloc buckets failed");
         free(index);
         return NULL;
     }
+    index->values = index->keys + (capacity * key_size );
     index->num_entries = 0;
     index->key_size = key_size;
     index->value_size = value_size;
     index->num_buckets = capacity;
-    index->bucket_size = index->key_size + index->value_size;
     index->lower_limit = get_lower_limit(index->num_buckets);
     index->upper_limit = get_upper_limit(index->num_buckets);
     for(i = 0; i < capacity; i++) {
@@ -341,14 +356,14 @@ hashindex_init(int capacity, int key_size, int value_size)
 static void
 hashindex_free(HashIndex *index)
 {
-    free(index->buckets);
+    free(index->keys);
     free(index);
 }
 
 static int
 hashindex_write(HashIndex *index, const char *path)
 {
-    off_t buckets_length = (off_t)index->num_buckets * index->bucket_size;
+    off_t buckets_length = (off_t)index->num_buckets * (index->key_size + index->value_size);
     FILE *fd;
     HashHeader header = {
         .magic = MAGIC,
@@ -367,7 +382,7 @@ hashindex_write(HashIndex *index, const char *path)
         EPRINTF_PATH(path, "fwrite header failed");
         ret = 0;
     }
-    if(fwrite(index->buckets, 1, buckets_length, fd) != (size_t) buckets_length) {
+    if(fwrite(index->keys, 1, buckets_length, fd) != (size_t) buckets_length) {
         EPRINTF_PATH(path, "fwrite buckets failed");
         ret = 0;
     }
@@ -384,7 +399,7 @@ hashindex_get(HashIndex *index, const void *key)
     if(idx < 0) {
         return NULL;
     }
-    return BUCKET_ADDR(index, idx) + index->key_size;
+    return VALUE_ADDR(index, idx);
 }
 
 static int
@@ -392,7 +407,7 @@ hashindex_set(HashIndex *index, const void *key, const void *value)
 {
     int start_addr;
     int idx = hashindex_lookup(index, key, &start_addr);
-    uint8_t *ptr;
+    /* uint8_t *ptr; */
     if(idx < 0)
     {
         if(index->num_entries > index->upper_limit) {
@@ -409,14 +424,14 @@ hashindex_set(HashIndex *index, const void *key, const void *value)
                 idx = idx - index->num_buckets;
             }
         }
-        ptr = BUCKET_ADDR(index, idx);
-        memcpy(ptr, key, index->key_size);
-        memcpy(ptr + index->key_size, value, index->value_size);
+        /* ptr = BUCKET_ADDR(index, idx); */
+        memcpy(KEY_ADDR(index, idx), key, index->key_size);
+        memcpy(VALUE_ADDR(index, idx), value, index->value_size);
         index->num_entries += 1;
     }
     else
     {
-        memcpy(BUCKET_ADDR(index, idx) + index->key_size, value, index->value_size);
+        memcpy(VALUE_ADDR(index, idx), value, index->value_size);
     }
     return 1;
 }
@@ -438,23 +453,26 @@ hashindex_delete(HashIndex *index, const void *key)
     return 1;
 }
 
-static void *
-hashindex_next_key(HashIndex *index, const void *key)
+static int
+hashindex_next_index(HashIndex *index, int idx)
 {
-    int idx = 0;
-    if(key) {
-        idx = 1 + (key - index->buckets) / index->bucket_size;
-    }
-    if (idx == index->num_buckets) {
-        return NULL;
-    }
     while(BUCKET_IS_EMPTY(index, idx) || BUCKET_IS_DELETED(index, idx)) {
         idx ++;
-        if (idx == index->num_buckets) {
-            return NULL;
+        if (idx >= index->num_buckets) {
+            return -1;
         }
     }
-    return BUCKET_ADDR(index, idx);
+    return idx;
+}
+
+static void*
+hashindex_get_value_at_index(HashIndex *index, int idx) {
+    return VALUE_ADDR(index, idx);
+}
+
+static void*
+hashindex_get_key_at_index(HashIndex *index, int idx) {
+    return KEY_ADDR(index, idx);
 }
 
 static int

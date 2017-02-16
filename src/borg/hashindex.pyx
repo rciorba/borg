@@ -21,7 +21,8 @@ cdef extern from "_hashindex.c":
     int hashindex_get_size(HashIndex *index)
     int hashindex_write(HashIndex *index, char *path)
     void *hashindex_get(HashIndex *index, void *key)
-    void *hashindex_next_key(HashIndex *index, void *key)
+    int hashindex_get_idx(HashIndex *index, void *key)
+    int hashindex_next_index(HashIndex *index, int idx)
     int hashindex_delete(HashIndex *index, void *key)
     int hashindex_set(HashIndex *index, void *key, void *value)
     uint32_t _htole32(uint32_t v)
@@ -30,7 +31,8 @@ cdef extern from "_hashindex.c":
     void benchmark_setitem(HashIndex *index, char *keys, int key_count)
     void benchmark_delete(HashIndex *index, char *keys, int key_count)
     void benchmark_churn(HashIndex *index, char *keys, int key_count)
-
+    void* hashindex_get_value_at_index(HashIndex *index, int idx);
+    void* hashindex_get_key_at_index(HashIndex *index, int idx);
 
 cdef _NoDefault = object()
 
@@ -159,36 +161,36 @@ cdef class NSIndex(IndexBase):
         return data != NULL
 
     def iteritems(self, marker=None):
-        cdef const void *key
+        cdef int pos_idx
         iter = NSKeyIterator(self.key_size)
         iter.idx = self
         iter.index = self.index
         if marker:
-            key = hashindex_get(self.index, <char *>marker)
-            if marker is None:
+            pos_idx = hashindex_get_idx(self.index, <char *>marker)
+            if pos_idx == -1:
                 raise IndexError
-            iter.key = key - self.key_size
+            iter.pos_idx = pos_idx
         return iter
 
 
 cdef class NSKeyIterator:
     cdef NSIndex idx
     cdef HashIndex *index
-    cdef const void *key
+    cdef int pos_idx
     cdef int key_size
 
     def __cinit__(self, key_size):
-        self.key = NULL
+        self.pos_idx = 0
         self.key_size = key_size
 
     def __iter__(self):
         return self
 
     def __next__(self):
-        self.key = hashindex_next_key(self.index, <char *>self.key)
-        if not self.key:
+        self.pos_idx = hashindex_next_index(self.index, self.pos_idx)
+        if self.pos_idx == -1:
             raise StopIteration
-        cdef uint32_t *value = <uint32_t *>(self.key + self.key_size)
+        cdef uint32_t *value = <uint32_t *>hashindex_get_value_at_index(self.index, self.pos_idx)
         cdef uint32_t segment = _le32toh(value[0])
         assert segment <= _MAX_VALUE, "maximum number of segments reached"
         return (<char *>self.key)[:self.key_size], (segment, _le32toh(value[1]))
@@ -271,29 +273,33 @@ cdef class ChunkIndex(IndexBase):
         return refcount, _le32toh(data[1]), _le32toh(data[2])
 
     def iteritems(self, marker=None):
-        cdef const void *key
+        cdef int pos_idx
         iter = ChunkKeyIterator(self.key_size)
         iter.idx = self
         iter.index = self.index
         if marker:
-            key = hashindex_get(self.index, <char *>marker)
-            if marker is None:
+            # key = hashindex_get(self.index, <char *>marker)
+            # if marker is None:
+            #      raise IndexError
+            # iter.key = key - self.key_size
+            pos_idx = hashindex_get_idx(self.index, <char *>marker)
+            if pos_idx == -1:
                 raise IndexError
-            iter.key = key - self.key_size
+            iter.pos_idx = pos_idx
         return iter
 
     def summarize(self):
         cdef uint64_t size = 0, csize = 0, unique_size = 0, unique_csize = 0, chunks = 0, unique_chunks = 0
         cdef uint32_t *values
         cdef uint32_t refcount
-        cdef void *key = NULL
+        cdef int idx = 0
 
         while True:
-            key = hashindex_next_key(self.index, key)
-            if not key:
+            idx = hashindex_next_index(self.index, idx)
+            if idx == -1:
                 break
             unique_chunks += 1
-            values = <uint32_t*> (key + self.key_size)
+            values = <uint32_t*> hashindex_get_value_at_index(self.index, idx)
             refcount = _le32toh(values[0])
             assert refcount <= MAX_VALUE, "invalid reference count"
             chunks += refcount
@@ -329,36 +335,45 @@ cdef class ChunkIndex(IndexBase):
                 raise Exception('hashindex_set failed')
 
     def merge(self, ChunkIndex other):
-        cdef void *key = NULL
+        cdef int idx = 0
 
         while True:
-            key = hashindex_next_key(other.index, key)
-            if not key:
+            # key = hashindex_next_key(other.index, key)
+            # if not key:
+            #     break
+            # self._add(key, <uint32_t*> (key + self.key_size))
+            idx = hashindex_next_index(other.index, idx)
+            if idx == -1:
                 break
-            self._add(key, <uint32_t*> (key + self.key_size))
+            self._add(hashindex_get_key_at_index(other.index, idx),
+                      <uint32_t*> hashindex_get_value_at_index(other.index, idx))
 
 
 cdef class ChunkKeyIterator:
     cdef ChunkIndex idx
     cdef HashIndex *index
-    cdef const void *key
+    cdef int pos_idx
     cdef int key_size
 
     def __cinit__(self, key_size):
-        self.key = NULL
+        self.pos_idx = 0
         self.key_size = key_size
 
     def __iter__(self):
         return self
 
     def __next__(self):
-        self.key = hashindex_next_key(self.index, <char *>self.key)
-        if not self.key:
+        print('next')
+        self.pos_idx = hashindex_next_index(self.index, self.pos_idx)
+        if self.pos_idx == -1:
             raise StopIteration
-        cdef uint32_t *value = <uint32_t *>(self.key + self.key_size)
+        cdef uint32_t *value = <uint32_t *> hashindex_get_value_at_index(self.index, self.pos_idx)
         cdef uint32_t refcount = _le32toh(value[0])
         assert refcount <= MAX_VALUE, "invalid reference count"
-        return (<char *>self.key)[:self.key_size], ChunkIndexEntry(refcount, _le32toh(value[1]), _le32toh(value[2]))
+        return (
+            (<char *>hashindex_get_key_at_index(self.index, self.pos_idx))[:self.key_size],
+            ChunkIndexEntry(refcount, _le32toh(value[1]), _le32toh(value[2]))
+        )
 
 
 from cpython.bytes cimport PyBytes_AS_STRING
