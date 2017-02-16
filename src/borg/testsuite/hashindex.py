@@ -121,6 +121,24 @@ class HashIndexTestCase(BaseTestCase):
         assert chunks == 1 + 2 + 3
         assert unique_chunks == 3
 
+    def test_chunk_indexer_getitem(self):
+        max_key = 2**20
+        index = ChunkIndex(max_key)
+        keys = [hashlib.sha256(H(k)).digest() for k in range(max_key)]
+        for i, key in enumerate(keys):
+            # we want 32 byte keys, since that's what we use day to day
+            index[key] = (i, i, i)
+
+        missing, wrong = 0, 0
+        for i, key in enumerate(keys):
+            # we want 32 byte keys, since that's what we use day to day
+            val = index.get(key)
+            if val is None:
+                missing += 1
+            elif val != (i, i, i):
+                wrong += 1
+        assert (missing, wrong) == (0, 0)
+
 
 class HashIndexRefcountingTestCase(BaseTestCase):
     def test_chunkindex_limit(self):

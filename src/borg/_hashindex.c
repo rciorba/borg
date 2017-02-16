@@ -307,6 +307,7 @@ hashindex_read(const char *path)
                              (uintmax_t) buckets_length, (uintmax_t) bytes_read);
         }
         free(index->keys);
+        free(index->values);
         free(index);
         index = NULL;
         goto fail;
@@ -324,6 +325,16 @@ fail:
     return index;
 }
 
+void * borg_aligned_alloc(int size, int alignment) {
+    void * allocated;
+    size = size + size % alignment;
+    allocated = aligned_alloc(alignment, size);
+    if (allocated != NULL) {
+        memset(allocated, 0, size);
+    }
+    return allocated;
+}
+
 static HashIndex *
 hashindex_init(int capacity, int key_size, int value_size)
 {
@@ -335,12 +346,13 @@ hashindex_init(int capacity, int key_size, int value_size)
         EPRINTF("malloc header failed");
         return NULL;
     }
-    if(!(index->keys = calloc(capacity, key_size + value_size))) {
+    if(!(index->keys = borg_aligned_alloc(capacity * key_size, key_size))) {
         EPRINTF("malloc buckets failed");
         free(index);
         return NULL;
     }
-    index->values = index->keys + (capacity * key_size );
+    /* index->values = index->keys + (capacity * key_size ); */
+    index->values = borg_aligned_alloc(capacity * value_size, value_size);
     index->num_entries = 0;
     index->key_size = key_size;
     index->value_size = value_size;
@@ -357,6 +369,7 @@ static void
 hashindex_free(HashIndex *index)
 {
     free(index->keys);
+    free(index->values);
     free(index);
 }
 
