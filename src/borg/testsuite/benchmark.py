@@ -226,7 +226,7 @@ def test_chunk_indexer_c_setitem(benchmark, fill):
         for i in range(0, 32*max_key, 32):
             key = keys[i:i+32]
             index[key] = bucket_val
-        return [ChunkIndex(max_key), ], dict()
+        return (index, ), dict()
 
     def do_sets(index):
         bench_setitem(index, keys)
@@ -246,7 +246,7 @@ def test_chunk_indexer_c_delete(benchmark, fill):
         for i in range(0, 32*max_key, 32):
             key = keys[i:i+32]
             index[key] = bucket_val
-        return [ChunkIndex(445649), ], dict()
+        return (index, ), dict()
 
     def do_delete(index):
         bench_delete(index, delete_keys)
@@ -273,7 +273,7 @@ def test_chunk_indexer_c_setitem_after_deletion(benchmark, fill):
         for i in range(0, len(delete_keys), 32):
             key = delete_keys[i:i+32]
             del index[key]
-        return [ChunkIndex(445649), ], dict()
+        return (index, ), dict()
 
     def do_sets(index):
         bench_setitem(index, keys)
@@ -291,7 +291,7 @@ def test_chunk_indexer_c_churn(benchmark, fill):
         for i in range(0, len(keys), 32):
             key = keys[i:i+32]
             index[key] = bucket_val
-        return [ChunkIndex(445649), ], dict()
+        return [index, ], dict()
 
     def do_sets(index):
         bench_churn(index, keys)
