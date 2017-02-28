@@ -143,11 +143,9 @@ hashindex_lookup(HashIndex *index, const void *key, int *skip_hint)
             rv = -1;
             /* debug_print("\n hashindex_lookup:empty %d\n", offset); */
             break;
-        }
-        if(BUCKET_MATCHES_KEY(index, idx, key)) {
+        } else if(BUCKET_MATCHES_KEY(index, idx, key)) {
             return idx;
-        }
-        if(period++ == 63){
+        } else if(period++ == 63){
 	    period = 0;
 	    if (offset > distance(idx, hashindex_index(index, BUCKET_ADDR(index, idx)), index->num_buckets)) {
 		rv = -1;
@@ -456,7 +454,7 @@ lshift_chunk_size(HashIndex *index, int bucket_index) {
             (distance(bucket_index,
                       hashindex_index(index, BUCKET_ADDR(index, bucket_index)),
                       index->num_buckets) == 0)) {
-            return (bucket_index - start) * index->bucket_size;
+            return (bucket_index - start);
         }
         bucket_index++;
     }
@@ -559,11 +557,10 @@ hashindex_delete(HashIndex *index, const void *key)
     if(c_size != -1) {
         // the simple case, just shift a chunk
         if (c_size != 0) {
-            memmove(BUCKET_ADDR(index, idx), BUCKET_ADDR(index, (idx+1)), c_size);
+            memmove(BUCKET_ADDR(index, idx), BUCKET_ADDR(index, (idx+1)), c_size * index->bucket_size);
         }
         // and mark the last position of the chunk empty
-        idx += c_size/index->bucket_size;
-        BUCKET_MARK_EMPTY(index, idx);
+        BUCKET_MARK_EMPTY(index, (idx+c_size));
     } else {
         // the complicated case, we shift all the way to the end of the bucket array
         memmove(BUCKET_ADDR(index, idx), BUCKET_ADDR(index, idx+1),
@@ -583,8 +580,8 @@ hashindex_delete(HashIndex *index, const void *key)
                 // nothing to shift, mark first bucket empty and we're done
                 BUCKET_MARK_EMPTY(index, 0);
             } else {
-                memmove(BUCKET_ADDR(index, 0), BUCKET_ADDR(index, 1), c_size);
-                BUCKET_MARK_EMPTY(index, (c_size/index->bucket_size));
+                memmove(BUCKET_ADDR(index, 0), BUCKET_ADDR(index, 1), c_size*index->bucket_size);
+                BUCKET_MARK_EMPTY(index, c_size);
             }
         }
     }
