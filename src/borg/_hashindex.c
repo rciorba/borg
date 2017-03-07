@@ -160,10 +160,6 @@ hashindex_lookup(HashIndex *index, const void *key, int *skip_hint)
         if (idx >= index->num_buckets) {
             idx = 0;
         }
-        if(idx == start) {
-            rv = -1;
-            break;
-        }
         period++;
     }
     if (skip_hint != NULL) {
