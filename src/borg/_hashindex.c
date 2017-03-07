@@ -138,23 +138,24 @@ hashindex_lookup(HashIndex *index, const void *key, int *skip_hint)
     int offset;
     int rv = -1;
     int period = 0;
+    debug_print("starting at %d\n", start);
     for(offset=0; ;offset++) {
         if(BUCKET_IS_EMPTY(index, idx)) {
             rv = -1;
-            /* debug_print("\n hashindex_lookup:empty %d\n", offset); */
+            debug_print("> empty at %d after %d\n", idx, offset);
             break;
         }
         if(BUCKET_MATCHES_KEY(index, idx, key)) {
             return idx;
         }
-        if(period++ == 63){
-	    period = 0;
+        if(period == 64){
+            debug_print("> %d: %d > %d\n", idx, offset, distance(idx, hashindex_index(index, BUCKET_ADDR(index, idx)), index->num_buckets));
 	    if (offset > distance(idx, hashindex_index(index, BUCKET_ADDR(index, idx)), index->num_buckets)) {
-		rv = -1;
+                rv = -1;
 		break;
 	    }
+	    period = 0;
 	}
-
         idx ++;
         if (idx >= index->num_buckets) {
             idx = 0;
@@ -163,15 +164,16 @@ hashindex_lookup(HashIndex *index, const void *key, int *skip_hint)
             rv = -1;
             break;
         }
+        period++;
     }
     if (skip_hint != NULL) {
         /* compensate for the period, hashindex_set will need to re-examine the last
            16 buckets for a suitable bucket to insert it's value */
-        offset = offset - 64;
+        offset = offset - period;
         if (offset < 0) {
             offset = 0;
         }
-        (*skip_hint) = offset;
+       (*skip_hint) = offset;
     }
     return rv;
 }
@@ -375,7 +377,7 @@ hashindex_init(int capacity, int key_size, int value_size)
     index->bucket_size = index->key_size + index->value_size;
     index->lower_limit = get_lower_limit(index->num_buckets);
     index->upper_limit = get_upper_limit(index->num_buckets);
-    debug_print("\ninit %d < %d\n", index->lower_limit, index->upper_limit);
+    debug_print("\ninit n:%d %d < %d\n", index->num_buckets, index->lower_limit, index->upper_limit);
 
     for(i = 0; i < capacity; i++) {
         BUCKET_MARK_EMPTY(index, i);
@@ -478,7 +480,7 @@ hashindex_set(HashIndex *index, const void *key, const void *value)
     else
     {
         /* we don't have the key in the index we need to find an appropriate address */
-        debug_print("%s", "\n\nmiss\n");
+        debug_print("miss, offset: %d\n", offset);
         if(index->num_entries > index->upper_limit) {
             /* we need to grow the hashindex */
             if(!hashindex_resize(index, grow_size(index->num_buckets))) {
@@ -495,6 +497,7 @@ hashindex_set(HashIndex *index, const void *key, const void *value)
                                   hashindex_index(index, BUCKET_ADDR(index, idx)),
                                   index->num_buckets))) {
             offset ++;
+            debug_print("skipping %d\n", idx);
             idx++;
             if (idx >= index->num_buckets) {
                 idx = 0;
@@ -502,6 +505,7 @@ hashindex_set(HashIndex *index, const void *key, const void *value)
         }
         if (!BUCKET_IS_EMPTY(index, idx)) {
             // we have a collision
+            debug_print("collision at %d\n", idx);
             chunk_size = rshift_chunk_size(index, idx);
             if (chunk_size > 0) {
                 // shift by one bucket
@@ -537,6 +541,7 @@ hashindex_set(HashIndex *index, const void *key, const void *value)
                 memcpy(BUCKET_ADDR(index, idx), index->tmp_entry, index->bucket_size);
             }
         } else {
+            debug_print("normal insert at %d\n", idx);
             memcpy(BUCKET_ADDR(index, idx), key, index->key_size);
             memcpy(BUCKET_ADDR(index, idx)+index->key_size, value, index->value_size);
         }

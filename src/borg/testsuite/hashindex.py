@@ -4,6 +4,7 @@ import os
 import tempfile
 import zlib
 import sys
+import struct
 
 from ..hashindex import NSIndex, ChunkIndex
 from .. import hashindex
@@ -134,7 +135,6 @@ class HashIndexExtraTestCase(BaseTestCase):
         deleted_keys = [
             hashlib.sha256(H(k)).digest()
             for k in range(-1, -int(max_key/3), -1)]
-        print(max_key + len(deleted_keys))
         keys = [hashlib.sha256(H(k)).digest() for k in range(max_key)]
         for i, key in enumerate(keys):
             index[key] = (i, i, i)
