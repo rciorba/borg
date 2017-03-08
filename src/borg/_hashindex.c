@@ -166,10 +166,7 @@ hashindex_lookup(HashIndex *index, const void *key, int *skip_hint)
         /* compensate for the period, hashindex_set will need to re-examine the last
            16 buckets for a suitable bucket to insert it's value */
         offset = offset - period;
-        if (offset < 0) {
-            offset = 0;
-        }
-       (*skip_hint) = offset;
+        (*skip_hint) = offset;
     }
     return rv;
 }
