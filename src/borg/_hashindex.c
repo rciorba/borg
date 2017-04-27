@@ -84,6 +84,8 @@ static int hash_sizes[] = {
                               an appropriate value; also don't forget to update this
                               value in archive.py */
 
+#define META_SIZE 4
+
 #define MAX(x, y) ((x) > (y) ? (x): (y))
 #define NELEMS(x) (sizeof(x) / sizeof((x)[0]))
 
@@ -91,6 +93,8 @@ static int hash_sizes[] = {
 #define DELETED _htole32(0xfffffffe)
 
 #define BUCKET_ADDR(index, idx) (index->buckets + ((idx) * index->bucket_size))
+
+#define BUCKET_IDEAL_ADDR(index, idx) *((int32_t *)(BUCKET_ADDR(index, idx) + index->key_size + index->value_size))
 
 #define BUCKET_MATCHES_KEY(index, idx, key) (memcmp(key, BUCKET_ADDR(index, idx), index->key_size) == 0)
 
@@ -149,9 +153,11 @@ hashindex_lookup(HashIndex *index, const void *key, int *skip_hint)
             return idx;
         }
         if(period == 64){
-            debug_print("> %d: %d > %d\n", idx, offset, distance(idx, hashindex_index(index, BUCKET_ADDR(index, idx)), index->num_buckets));
-	    if (offset > distance(idx, hashindex_index(index, BUCKET_ADDR(index, idx)), index->num_buckets)) {
-                rv = -1;
+	    if (offset > distance(idx,
+                                  /* hashindex_index(index, BUCKET_ADDR(index, idx)), */
+                                  BUCKET_IDEAL_ADDR(index, idx),
+                                  index->num_buckets)) {
+		rv = -1;
 		break;
 	    }
 	    period = 0;
@@ -287,7 +293,7 @@ hashindex_read(const char *path)
         EPRINTF_MSG_PATH(path, "Unknown MAGIC in header");
         goto fail;
     }
-    buckets_length = (off_t)_le32toh(header.num_buckets) * (header.key_size + header.value_size);
+    buckets_length = (off_t)_le32toh(header.num_buckets) * (header.key_size + header.value_size + META_SIZE);
     if((size_t) length != sizeof(HashHeader) + buckets_length) {
         EPRINTF_MSG_PATH(path, "Incorrect file length (expected %ju, got %ju)",
                          (uintmax_t) sizeof(HashHeader) + buckets_length, (uintmax_t) length);
@@ -303,7 +309,7 @@ hashindex_read(const char *path)
         index = NULL;
         goto fail;
     }
-    if(!(index->tmp_entry = calloc(1, header.key_size + header.value_size))) {
+    if(!(index->tmp_entry = calloc(1, header.key_size + header.value_size + META_SIZE))) {
         EPRINTF_PATH(path, "malloc temp entry failed");
         free(index->buckets);
         free(index);
@@ -330,7 +336,7 @@ hashindex_read(const char *path)
     index->num_buckets = _le32toh(header.num_buckets);
     index->key_size = header.key_size;
     index->value_size = header.value_size;
-    index->bucket_size = index->key_size + index->value_size;
+    index->bucket_size = index->key_size + index->value_size + META_SIZE;
     index->lower_limit = get_lower_limit(index->num_buckets);
     index->upper_limit = get_upper_limit(index->num_buckets);
 fail:
@@ -351,12 +357,12 @@ hashindex_init(int capacity, int key_size, int value_size)
         EPRINTF("malloc header failed");
         return NULL;
     }
-    if(!(index->buckets = calloc(capacity, key_size + value_size))) {
+    if(!(index->buckets = calloc(capacity, key_size + value_size + META_SIZE))) {
         EPRINTF("malloc buckets failed");
         free(index);
         return NULL;
     }
-    if(!(index->tmp_entry = calloc(1, key_size + value_size))) {
+    if(!(index->tmp_entry = calloc(1, key_size + value_size + META_SIZE))) {
         EPRINTF("malloc temp entry failed");
         free(index->buckets);
         free(index);
@@ -367,7 +373,7 @@ hashindex_init(int capacity, int key_size, int value_size)
     index->key_size = key_size;
     index->value_size = value_size;
     index->num_buckets = capacity;
-    index->bucket_size = index->key_size + index->value_size;
+    index->bucket_size = index->key_size + index->value_size + META_SIZE;
     index->lower_limit = get_lower_limit(index->num_buckets);
     index->upper_limit = get_upper_limit(index->num_buckets);
     debug_print("\ninit n:%d %d < %d\n", index->num_buckets, index->lower_limit, index->upper_limit);
@@ -449,7 +455,8 @@ lshift_chunk_size(HashIndex *index, int bucket_index) {
     while(bucket_index < index->num_buckets) {
         if (BUCKET_IS_EMPTY(index, bucket_index) ||
             (distance(bucket_index,
-                      hashindex_index(index, BUCKET_ADDR(index, bucket_index)),
+                      /* hashindex_index(index, BUCKET_ADDR(index, bucket_index)), */
+                      BUCKET_IDEAL_ADDR(index, bucket_index),
                       index->num_buckets) == 0)) {
             return (bucket_index - start) * index->bucket_size;
         }
@@ -464,6 +471,7 @@ hashindex_set(HashIndex *index, const void *key, const void *value)
     int offset = 0;
     int chunk_size;
     int idx = hashindex_lookup(index, key, &offset);
+    int ideal_idx;
     if(idx >= 0)
     {
         debug_print("%s", "\nhit\n");
@@ -485,9 +493,11 @@ hashindex_set(HashIndex *index, const void *key, const void *value)
         if (idx >= index->num_buckets){
             idx = idx - index->num_buckets;
         }
+        ideal_idx = idx;
         while(!BUCKET_IS_EMPTY(index, idx) &&
               (offset <= distance(idx,
-                                  hashindex_index(index, BUCKET_ADDR(index, idx)),
+                                  /* hashindex_index(index, BUCKET_ADDR(index, idx)), */
+                                  BUCKET_IDEAL_ADDR(index, idx),
                                   index->num_buckets))) {
             offset ++;
             debug_print("skipping %d\n", idx);
@@ -506,6 +516,7 @@ hashindex_set(HashIndex *index, const void *key, const void *value)
                 // and insert the key
                 memcpy(BUCKET_ADDR(index, idx), key, index->key_size);
                 memcpy(BUCKET_ADDR(index, idx)+index->key_size, value, index->value_size);
+                *(int32_t*)(BUCKET_ADDR(index, idx) + index->key_size + index->value_size) = ideal_idx;
             } else {
                 if (chunk_size != -1){
                     debug_print("\n! chunk_size: %d\n\n", chunk_size);
@@ -522,6 +533,7 @@ hashindex_set(HashIndex *index, const void *key, const void *value)
                 // insert the value
                 memcpy(BUCKET_ADDR(index, idx), key, index->key_size);
                 memcpy(BUCKET_ADDR(index, idx) + index->key_size, value, index->value_size);
+                *(int32_t*)(BUCKET_ADDR(index, idx) + index->key_size + index->value_size) = ideal_idx;
                 idx = 0;
                 chunk_size = rshift_chunk_size(index, idx);
                 if (chunk_size > 0) {
@@ -537,6 +549,7 @@ hashindex_set(HashIndex *index, const void *key, const void *value)
             debug_print("normal insert at %d\n", idx);
             memcpy(BUCKET_ADDR(index, idx), key, index->key_size);
             memcpy(BUCKET_ADDR(index, idx)+index->key_size, value, index->value_size);
+            *(int32_t*)(BUCKET_ADDR(index, idx) + index->key_size + index->value_size) = ideal_idx;
         }
         index->num_entries += 1;
     }
