@@ -141,7 +141,6 @@ hashindex_lookup(HashIndex *index, const void *key, int *skip_hint)
     int idx = start;
     int offset;
     int rv = -1;
-    int period = 0;
     debug_print("starting at %d\n", start);
     for(offset=0; ;offset++) {
         if(BUCKET_IS_EMPTY(index, idx)) {
@@ -152,26 +151,22 @@ hashindex_lookup(HashIndex *index, const void *key, int *skip_hint)
         if(BUCKET_MATCHES_KEY(index, idx, key)) {
             return idx;
         }
-        if(period == 64){
-	    if (offset > distance(idx,
-                                  /* hashindex_index(index, BUCKET_ADDR(index, idx)), */
-                                  BUCKET_IDEAL_ADDR(index, idx),
-                                  index->num_buckets)) {
-		rv = -1;
-		break;
-	    }
-	    period = 0;
-	}
+        if (offset > distance(idx,
+                              /* hashindex_index(index, BUCKET_ADDR(index, idx)), */
+                              BUCKET_IDEAL_ADDR(index, idx),
+                              index->num_buckets)) {
+          rv = -1;
+          break;
+        }
         idx ++;
         if (idx >= index->num_buckets) {
             idx = 0;
         }
-        period++;
     }
     if (skip_hint != NULL) {
         /* compensate for the period, hashindex_set will need to re-examine the last
            16 buckets for a suitable bucket to insert it's value */
-        offset = offset - period;
+        /* offset = offset - period; */
         (*skip_hint) = offset;
     }
     return rv;
