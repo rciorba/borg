@@ -117,6 +117,29 @@ static int hashindex_set(HashIndex *index, const void *key, const void *value);
 static int hashindex_delete(HashIndex *index, const void *key);
 static void *hashindex_next_key(HashIndex *index, const void *key);
 
+static void pprint_hashmap(HashIndex *index) {
+    int idx;
+    int previous_empty = 0;
+    debug_print("%s\n", "-------");
+    for (idx=0; idx < index->num_buckets; idx++){
+        if(BUCKET_IS_EMPTY(index, idx)) {
+            previous_empty = 1;
+        }
+        else {
+            if(previous_empty) {
+                debug_print("%s", " ....  .... \n");
+            }
+            debug_print("%5d %5d\n", idx, BUCKET_IDEAL_ADDR(index, idx));
+            previous_empty = 0;
+        }
+    }
+    if(previous_empty) {
+        debug_print("%s", "... \n");
+    }
+    debug_print("%s\n", "-------");
+}
+
+
 /* Private API */
 static void hashindex_free(HashIndex *index);
 
@@ -141,7 +164,7 @@ hashindex_lookup(HashIndex *index, const void *key, int *skip_hint)
     int idx = start;
     int offset;
     int rv = -1;
-    debug_print("starting at %d\n", start);
+    debug_print("lookup starting at %d\n", start);
     for(offset=0; ;offset++) {
         if(BUCKET_IS_EMPTY(index, idx)) {
             rv = -1;
@@ -444,15 +467,27 @@ rshift_chunk_size(HashIndex *index, int bucket_index) {
     return -1;
 }
 
+
 static inline int
-lshift_chunk_size(HashIndex *index, int bucket_index) {
+left_shift_chunk_size(HashIndex *index, int bucket_index) {
     int start = bucket_index;
+    debug_print("> left_shift_chunk_size starting at %d\n", bucket_index);
+    pprint_hashmap(index);
     while(bucket_index < index->num_buckets) {
+        // loop till the end of the hashmap
         if (BUCKET_IS_EMPTY(index, bucket_index) ||
             (distance(bucket_index,
                       /* hashindex_index(index, BUCKET_ADDR(index, bucket_index)), */
                       BUCKET_IDEAL_ADDR(index, bucket_index),
                       index->num_buckets) == 0)) {
+            if (BUCKET_IS_EMPTY(index, bucket_index))
+                debug_print("%s", "lshift: empty bucket\n");
+            if (distance(bucket_index,
+                         /* hashindex_index(index, BUCKET_ADDR(index, bucket_index)), */
+                         BUCKET_IDEAL_ADDR(index, bucket_index),
+                         index->num_buckets) == 0)
+                debug_print("%s", "lshift: distance is 0\n");
+
             return (bucket_index - start) * index->bucket_size;
         }
         bucket_index++;
@@ -467,6 +502,7 @@ hashindex_set(HashIndex *index, const void *key, const void *value)
     int chunk_size;
     int idx = hashindex_lookup(index, key, &offset);
     int ideal_idx;
+    pprint_hashmap(index);
     if(idx >= 0)
     {
         debug_print("%s", "\nhit\n");
@@ -484,11 +520,11 @@ hashindex_set(HashIndex *index, const void *key, const void *value)
             }
             offset = 0;
         }
-        idx = hashindex_index(index, key) + offset;
+        ideal_idx = hashindex_index(index, key);
+        idx = ideal_idx + offset;
         if (idx >= index->num_buckets){
             idx = idx - index->num_buckets;
         }
-        ideal_idx = idx;
         while(!BUCKET_IS_EMPTY(index, idx) &&
               (offset <= distance(idx,
                                   /* hashindex_index(index, BUCKET_ADDR(index, idx)), */
@@ -528,6 +564,7 @@ hashindex_set(HashIndex *index, const void *key, const void *value)
                 // insert the value
                 memcpy(BUCKET_ADDR(index, idx), key, index->key_size);
                 memcpy(BUCKET_ADDR(index, idx) + index->key_size, value, index->value_size);
+                // set BUCKET_IDEAL_ADDR
                 *(int32_t*)(BUCKET_ADDR(index, idx) + index->key_size + index->value_size) = ideal_idx;
                 idx = 0;
                 chunk_size = rshift_chunk_size(index, idx);
@@ -548,6 +585,8 @@ hashindex_set(HashIndex *index, const void *key, const void *value)
         }
         index->num_entries += 1;
     }
+    pprint_hashmap(index);
+    debug_print("%s\n", "================");
     return 1;
 }
 
@@ -555,14 +594,17 @@ static int
 hashindex_delete(HashIndex *index, const void *key)
 {
     int idx = hashindex_lookup(index, key, NULL);
+    debug_print("delete idx: %d\n", idx);
     int c_size = -1;
+    pprint_hashmap(index);
     if (idx < 0) {
         return 1;  // not in index, nothing to do
     }
     if (idx+1 < index->num_buckets) {
-        c_size = lshift_chunk_size(index, idx+1);  // includes current idx in chunk
+        c_size = left_shift_chunk_size(index, idx+1);  // includes current idx in chunk
     }
     if(c_size != -1) {
+        debug_print("\nsimple r_shift of size %d\n\n", c_size);
         // the simple case, just shift a chunk
         if (c_size != 0) {
             memmove(BUCKET_ADDR(index, idx), BUCKET_ADDR(index, (idx+1)), c_size);
@@ -571,6 +613,7 @@ hashindex_delete(HashIndex *index, const void *key)
         idx += c_size/index->bucket_size;
         BUCKET_MARK_EMPTY(index, idx);
     } else {
+        debug_print("%s","\n r_shift to end\n\n");
         // the complicated case, we shift all the way to the end of the bucket array
         memmove(BUCKET_ADDR(index, idx), BUCKET_ADDR(index, idx+1),
                 (index->num_buckets - idx - 1) * index->bucket_size);
@@ -584,7 +627,8 @@ hashindex_delete(HashIndex *index, const void *key)
             memmove(BUCKET_ADDR(index, index->num_buckets-1), BUCKET_ADDR(index, 0),
                     index->bucket_size);
             // then determine if we need to shift an entire chunk after the first bucket
-            c_size = lshift_chunk_size(index, 1);
+            c_size = left_shift_chunk_size(index, 1);
+            debug_print("\n wrapped r_shift of size %ld\n\n", c_size/index->bucket_size);
             if(c_size == 0) {
                 // nothing to shift, mark first bucket empty and we're done
                 BUCKET_MARK_EMPTY(index, 0);
@@ -594,6 +638,7 @@ hashindex_delete(HashIndex *index, const void *key)
             }
         }
     }
+    pprint_hashmap(index);
     index->num_entries -= 1;
     if(index->num_entries < index->lower_limit) {
         if(!hashindex_resize(index, shrink_size(index->num_buckets))) {

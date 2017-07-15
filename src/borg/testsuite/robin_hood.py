@@ -19,6 +19,7 @@ def K(idx, wraps=0):
 
 def RK(key):
     """
+    Reverse K.
     Returns tuple of address and number of times it wraped.
     """
     key = struct.unpack(PACK_STRING, key)[-1]
@@ -86,7 +87,15 @@ class RobinHood(BaseTestCase):
         index[K(1)] =                1, 0, 0  # 1
         index[K(before_last)] =      2, 0, 0  # 1029
         index[K(before_last + 1)] =  3, 0, 0  # 1030
-        index[K(before_last, 1)] =   4, 0, 0  # this should shift the previous 1
+        assert [(RK(k), v) for k, v in index.iteritems()] == [
+            ((0, 0),             (0, 0, 0)),
+            ((1, 0),             (1, 0, 0)),
+            ((before_last, 0),   (2, 0, 0)),  # 1029
+            ((before_last+1, 0), (3, 0, 0)),  # 1030
+        ]
+        import sys
+        sys.stderr.write("  >>  collide\n")
+        index[K(before_last, 1)] =   4, 0, 0  # this should be in 1029, collide 1030
         assert [(RK(k), v) for k, v in index.iteritems()] == [
             ((before_last+1, 0), (3, 0, 0)),  # got shifted past the end of the bucket array
             ((0, 0),             (0, 0, 0)),  # displaced from 0
@@ -94,11 +103,16 @@ class RobinHood(BaseTestCase):
             ((before_last, 0),   (2, 0, 0)),  # 1029
             ((before_last, 1),   (4, 0, 0)),  # 1030 after displacing the bucket now at 0
         ]
+        from pprint import pprint
+        pprint([(RK(k), v) for k, v in index.iteritems()])
+        print('>>> delete', before_last)
         del index[K(before_last)]
+        # this is the actual assertion of the test, the previous ones are just
+        # for self-documenting and sanity checks
         assert [(RK(k), v) for k, v in index.iteritems()] == [
             ((0, 0),             (0, 0, 0)),  # back to 0
             ((1, 0),             (1, 0, 0)),  # back to 1
-            ((before_last, 1),   (4, 0, 0)),  # shifter to 1029
+            ((before_last, 1),   (4, 0, 0)),  # shifted to 1029
             ((before_last+1, 0), (3, 0, 0)),  # got wrapped back to the end
         ]
 
