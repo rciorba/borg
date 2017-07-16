@@ -113,7 +113,7 @@ hashindex_index(HashIndex *index, const void *key)
 static int
 hashindex_lookup(HashIndex *index, const void *key, int *start_hint)
 {
-    int didx = -1;
+    /* int didx = -1; */
     int start = hashindex_index(index, key);
     int idx = start;
     for(;;) {
@@ -122,17 +122,17 @@ hashindex_lookup(HashIndex *index, const void *key, int *start_hint)
         {
             break;
         }
-        if(BUCKET_IS_DELETED(index, idx)) {
-            if(didx == -1) {
-                didx = idx;
-            }
-        }
+        /* if(BUCKET_IS_DELETED(index, idx)) { */
+        /*     if(didx == -1) { */
+        /*         didx = idx; */
+        /*     } */
+        /* } */
         else if(BUCKET_MATCHES_KEY(index, idx, key)) {
-            if (didx != -1) {
-                memcpy(BUCKET_ADDR(index, didx), BUCKET_ADDR(index, idx), index->bucket_size);
-                BUCKET_MARK_DELETED(index, idx);
-                idx = didx;
-            }
+            /* if (didx != -1) { */
+            /*     memcpy(BUCKET_ADDR(index, didx), BUCKET_ADDR(index, idx), index->bucket_size); */
+            /*     BUCKET_MARK_DELETED(index, idx); */
+            /*     idx = didx; */
+            /* } */
             return idx;
         }
         /* idx = (idx + 1) % index->num_buckets; */
@@ -145,7 +145,8 @@ hashindex_lookup(HashIndex *index, const void *key, int *start_hint)
         }
     }
     if (start_hint != NULL) {
-        (*start_hint) = (didx == -1) ? idx : didx;
+        /* (*start_hint) = (didx == -1) ? idx : didx; */
+        (*start_hint) = idx;
     }
     return -1;
 }
