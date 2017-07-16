@@ -140,9 +140,6 @@ hashindex_lookup(HashIndex *index, const void *key, int *start_hint)
         if (idx >= index->num_buckets) {
             idx = 0;
         }
-        if(idx == start) {
-            break;
-        }
     }
     if (start_hint != NULL) {
         (*start_hint) = (didx == -1) ? idx : didx;
