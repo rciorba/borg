@@ -135,7 +135,11 @@ hashindex_lookup(HashIndex *index, const void *key, int *start_hint)
             }
             return idx;
         }
-        idx = (idx + 1) % index->num_buckets;
+        /* idx = (idx + 1) % index->num_buckets; */
+        idx ++;
+        if (idx >= index->num_buckets) {
+            idx = 0;
+        }
         if(idx == start) {
             break;
         }
@@ -399,7 +403,11 @@ hashindex_set(HashIndex *index, const void *key, const void *value)
         }
         idx = start_addr;
         while(!BUCKET_IS_EMPTY(index, idx) && !BUCKET_IS_DELETED(index, idx)) {
-            idx = (idx + 1) % index->num_buckets;
+            /* idx = (idx + 1) % index->num_buckets; */
+            idx += 1;
+            if (idx >= index->num_buckets){
+                idx = idx - index->num_buckets;
+            }
         }
         ptr = BUCKET_ADDR(index, idx);
         memcpy(ptr, key, index->key_size);
