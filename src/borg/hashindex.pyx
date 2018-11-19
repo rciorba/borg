@@ -16,7 +16,8 @@ API_VERSION = '1.1_07'
 
 cdef extern from "_hashindex.c":
     ctypedef struct HashIndex:
-        pass
+        int num_buckets
+        int key_size
 
     ctypedef struct FuseVersionsElement:
         uint32_t version
@@ -29,6 +30,8 @@ cdef extern from "_hashindex.c":
     int hashindex_size(HashIndex *index)
     void hashindex_write(HashIndex *index, object file_py) except *
     void *hashindex_get(HashIndex *index, void *key)
+    void *hashindex_get_key(HashIndex *index, int bucket_idx)
+    void *hashindex_get_value(HashIndex *index, int bucket_idx)
     void *hashindex_next_key(HashIndex *index, void *key)
     int hashindex_delete(HashIndex *index, void *key)
     int hashindex_set(HashIndex *index, void *key, void *value)
@@ -351,6 +354,15 @@ cdef class ChunkIndex(IndexBase):
             iter.key = key - self.key_size
         return iter
 
+    def memory_view(self):
+        # cdef MemoryViewIterator iter = MemoryViewIterator(self.index)
+        cdef MemoryViewIterator iter = MemoryViewIterator()
+        iter.index = self.index
+        iter.key_size = self.key_size
+        iter.bucket_index = 0
+        iter.num_buckets = self.index.num_buckets
+        return iter
+
     def summarize(self):
         cdef uint64_t size = 0, csize = 0, unique_size = 0, unique_csize = 0, chunks = 0, unique_chunks = 0
         cdef uint32_t *values
@@ -491,6 +503,40 @@ cdef class ChunkKeyIterator:
         cdef uint32_t refcount = _le32toh(value[0])
         assert refcount <= _MAX_VALUE, "invalid reference count"
         return (<char *>self.key)[:self.key_size], ChunkIndexEntry(refcount, _le32toh(value[1]), _le32toh(value[2]))
+
+
+cdef class MemoryViewIterator:
+    cdef HashIndex *index
+    cdef int bucket_index
+    cdef int key_size
+    # cdef int value_size
+    cdef int num_buckets
+
+    # def __cinit__(self, HashIndex* index):
+    #     self.index = index
+    #     self.bucket_index = 0
+    #     self.key_size = index.key_size
+    #     self.num_buckets = index.num_buckets
+
+    # def __init__(self, index):
+    #     self.index = index
+    #     self.key_size = index.key_size
+    #     self.value_size = index.value_size
+    #     self.bucket_index = 0
+    #     self.num_buckets = index.num_buckets
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.bucket_index == self.num_buckets:
+            raise StopIteration
+        cdef uint32_t *value = <uint32_t *>hashindex_get_value(self.index, self.bucket_index)
+        cdef char *key = <char *>hashindex_get_key(self.index, self.bucket_index)
+        self.bucket_index += 1
+        return (
+            key[:self.key_size],
+            ChunkIndexEntry(_le32toh(value[0]), _le32toh(value[1]), _le32toh(value[2])))
 
 
 cdef Py_buffer ro_buffer(object data) except *:

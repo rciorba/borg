@@ -2,6 +2,7 @@ import base64
 import hashlib
 import io
 import os
+import struct
 import tempfile
 import zlib
 
@@ -18,10 +19,18 @@ def H(x):
     # make some 32byte long thing that depends on x
     return bytes('%-0.32d' % x, 'ascii')
 
-
 def H2(x):
     # like H(x), but with pseudo-random distribution of the output value
     return hashlib.sha256(H(x)).digest()
+
+def H3(x):
+    # make a 32byte long thing that has x as the value of the last byte
+    # very useful if you want to cause key collisions in tests
+    return struct.pack("@L", x) * 4
+
+
+def reverseH3(key):
+    return struct.unpack("@L", key[0:8])[0]
 
 
 class HashIndexTestCase(BaseTestCase):
@@ -170,6 +179,46 @@ class HashIndexExtraTestCase(BaseTestCase):
             del index[key]
         # the index should now be empty
         assert list(index.iteritems()) == []
+
+    def test_backshift(self):
+        index = ChunkIndex(5)
+        empty, _ = next(index.memory_view())
+        # print(list(index.memory_view()))
+        ideal_positions = [0, 0, 2, 1, 2]
+        readable = [0, 0+1031, 2, 1+1031, 2+1031]
+        print (readable)
+        keys = [H3(r) for r in readable]
+        for i, (ideal, key) in enumerate(zip(ideal_positions, keys)):
+            index[key] = (ideal, i, 99)
+        print()
+        for i, (key, value) in enumerate(index.memory_view()):
+            if key != empty:
+                print(i, reverseH3(key), value)
+        del index[keys[0]]
+        print()
+        for i, (key, value) in enumerate(index.memory_view()):
+            if key != empty:
+                print(i, reverseH3(key), value)
+        # for i, (ideal, r_key) in enumerate(zip(ideal_positions[1:], readable[1:])):
+        #     key = H3(r_key)
+        #     expected = (ideal, i+1, 99)
+        #     print(">>", r_key)
+        #     print(index[key][0:2], "?=" , expected[0:2])
+        #     assert index[key] == expected
+
+
+    # def test_backshift(self):
+    #     index = ChunkIndex(5)
+    #     ideal = [0, 0, 2, 1, 2]
+    #     keys = [H3(0), H3(0+1031), H3(2), H3(1+1031), H3(2+1031)]
+    #     for i, (j, key) in enumerate(zip(ideal, keys)):
+    #         index[key] = (j, i, i)
+    #     print([v[0:2] for (k,v) in list(index.iteritems())])
+    #     del index[keys[0]]
+    #     print([v[0:2] for (k,v) in list(index.iteritems())])
+    #     for i, (j, key) in enumerate(zip(ideal[1:], keys[1:])):
+    #         print(">>", (j, i+1), key[-8:])
+    #         assert index[key] == (j, i+1, i+1)
 
 
 class HashIndexSizeTestCase(BaseTestCase):
