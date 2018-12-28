@@ -26,7 +26,9 @@ def H2(x):
 def H3(x):
     # make a 32byte long thing that has x as the value of the last byte
     # very useful if you want to cause key collisions in tests
-    return struct.pack("@L", x) * 4
+    # N.B. a key of all zeros is a marker for empty so we start and end with the number
+    # and put some nonzero bytes in the middle
+    return struct.pack("@L", x) + struct.pack("@L", 255) * 2 + struct.pack("@L", x)
 
 
 def reverseH3(key):
@@ -153,6 +155,18 @@ class HashIndexTestCase(BaseTestCase):
 class HashIndexExtraTestCase(BaseTestCase):
     """These tests are separate because they should not become part of the selftest.
     """
+    @staticmethod
+    def extract_positions(index, echo=False):
+        if echo:
+            print("   key  pos                ideal pos V")
+        positions = {}
+        for i, (key, value) in enumerate(index.memory_view()):
+            if key != None:
+                if echo:
+                    print("{:6} {:4} {}".format(reverseH3(key), i, value))
+                positions[reverseH3(key)] = i
+        return positions
+
     def test_chunk_indexer(self):
         # see _hashindex.c hash_sizes, we want to be close to the max. load
         # because interesting errors happen there.
@@ -180,32 +194,139 @@ class HashIndexExtraTestCase(BaseTestCase):
         # the index should now be empty
         assert list(index.iteritems()) == []
 
-    def test_backshift(self):
+    def test_backshift_normal(self):
         index = ChunkIndex(5)
-        empty, _ = next(index.memory_view())
-        # print(list(index.memory_view()))
-        ideal_positions = [0, 0, 2, 1, 2]
-        readable = [0, 0+1031, 2, 1+1031, 2+1031]
+        num_buckets = 0
+        for _ in index.memory_view():
+            num_buckets += 1
+        ideal_positions = [0, 0, 1]
+        readable = [0, 0+num_buckets, 1]
+        print(ideal_positions)
         print (readable)
         keys = [H3(r) for r in readable]
         for i, (ideal, key) in enumerate(zip(ideal_positions, keys)):
             index[key] = (ideal, i, 99)
+        print(self.extract_positions(index))
+        assert self.extract_positions(index) == {0: 0, num_buckets: 1, 1: 2}
+        print("del", readable[1])
+        del index[keys[1]]
         print()
-        for i, (key, value) in enumerate(index.memory_view()):
-            if key != empty:
-                print(i, reverseH3(key), value)
-        del index[keys[0]]
-        print()
-        for i, (key, value) in enumerate(index.memory_view()):
-            if key != empty:
-                print(i, reverseH3(key), value)
-        # for i, (ideal, r_key) in enumerate(zip(ideal_positions[1:], readable[1:])):
-        #     key = H3(r_key)
-        #     expected = (ideal, i+1, 99)
-        #     print(">>", r_key)
-        #     print(index[key][0:2], "?=" , expected[0:2])
-        #     assert index[key] == expected
+        positions = self.extract_positions(index)
+        assert positions == {0:0, 1:1}
 
+    def test_backshift_normal1(self):
+        index = ChunkIndex(5)
+        num_buckets = 0
+        for _ in index.memory_view():
+            num_buckets += 1
+        ideal_positions = [0, 0, 2, 0]
+        readable = [0, 0+num_buckets, 2, 0+(num_buckets*2)]
+        print(ideal_positions)
+        print (readable)
+        keys = [H3(r) for r in readable]
+        for i, (ideal, key) in enumerate(zip(ideal_positions, keys)):
+            index[key] = (ideal, i, 99)
+        print(self.extract_positions(index))
+        assert self.extract_positions(index) == {
+            0: 0,
+            num_buckets: 1,  # will be deleted! should be on 0 but it collided
+            2: 2,
+            (2*num_buckets):3,  # should move to 1 once that gets deleted
+        }
+        print("del", readable[1])
+        del index[keys[1]]
+        print()
+        positions = self.extract_positions(index)
+        assert positions == {0:0, 2:2, 2*num_buckets: 1}
+
+    def test_backshift_wrap0(self):
+        index = ChunkIndex(5)
+        num_buckets = 0
+        for _ in index.memory_view():
+            num_buckets += 1
+        print("num_buckets", num_buckets)
+        last = num_buckets -1
+        ideal_positions = [last, last]
+        readable = [last, last+num_buckets]
+        print(ideal_positions)
+        print(readable)
+        keys = [H3(r) for r in readable]
+        for i, (ideal, key) in enumerate(zip(ideal_positions, keys)):
+            index[key] = (ideal, i, 99)
+        print()
+        assert self.extract_positions(index, echo=True) == {
+            last: last,  #  this will get deleted
+            last+num_buckets: 0,  # this should have been in last, but it collided so we got 0
+        }
+        print("del", readable[0])
+        del index[keys[0]]
+        positions = self.extract_positions(index, echo=True)
+        assert positions == {
+            last+num_buckets: last,  # this should have backshifted by one, and wrapped
+        }
+
+    def test_backshift_wrap1(self):
+        index = ChunkIndex(7)
+        num_buckets = 0
+        for _ in index.memory_view():
+            num_buckets += 1
+        print("num_buckets", num_buckets)
+        last = num_buckets -1
+        ideal_positions = [last, last, 0]
+        readable = [last, last+num_buckets, 0]
+        print(ideal_positions)
+        print(readable)
+        keys = [H3(r) for r in readable]
+        for i, (ideal, key) in enumerate(zip(ideal_positions, keys)):
+            index[key] = (ideal, i, 99)
+        print()
+        assert self.extract_positions(index, echo=True) == {
+            last: last,  #  this will get deleted
+            last+num_buckets: 0,  # this should have been in last pos, but it collided so it's in 0
+            0: 1,  # 0 ended up here because of the collisions
+        }
+        print("del", readable[0])
+        del index[keys[0]]
+        positions = self.extract_positions(index, echo=True)
+
+        assert positions == {
+            last+num_buckets: last,  # this should have backshifted by one, and wrapped
+            0: 0,  # this should have backshifted to 0
+        }
+
+        # if the above is correct these keys should be found as well, but let's still check
+        for key in readable[1:]:
+            assert H3(key) in index, "missing key {!r}".format(key)
+
+    def test_backshift_wrap2(self):
+        index = ChunkIndex(5)
+        num_buckets = 0
+        for _ in index.memory_view():
+            num_buckets += 1
+        print("num_buckets", num_buckets)
+        last = num_buckets -1
+        ideal_positions = [last, last, 1, 0]
+        readable = [last, last+num_buckets, 1, 0]
+        print(ideal_positions)
+        print(readable)
+        keys = [H3(r) for r in readable]
+        for i, (ideal, key) in enumerate(zip(ideal_positions, keys)):
+            index[key] = (ideal, i, 99)
+        print()
+        assert self.extract_positions(index, echo=True) == {
+            last: last,  #  this will get deleted
+            last+num_buckets: 0,  # this should have been in last, but it collided so we got 0
+            1: 1,  # this is in it's ideal place
+            0: 2,  # 0 ended up here because of the collisions
+        }
+        print("del", readable[0])
+        del index[keys[0]]
+        positions = self.extract_positions(index, echo=True)
+        assert positions == {
+            last+num_buckets: last,  # this should have backshifted by one, and wrapped
+            1: 1,  # this can't backshift, since it's allready in place
+            0: 0,  # this should have backshifted to 0
+        }
 
     # def test_backshift(self):
     #     index = ChunkIndex(5)

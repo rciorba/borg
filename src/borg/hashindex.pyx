@@ -535,8 +535,9 @@ cdef class MemoryViewIterator:
         cdef char *key = <char *>hashindex_get_key(self.index, self.bucket_index)
         self.bucket_index += 1
         return (
-            key[:self.key_size],
-            ChunkIndexEntry(_le32toh(value[0]), _le32toh(value[1]), _le32toh(value[2])))
+            key[:self.key_size] if key is not NULL else None,
+            ChunkIndexEntry(_le32toh(value[0]), _le32toh(value[1]), _le32toh(value[2])) if value is not NULL else None
+        )
 
 
 cdef Py_buffer ro_buffer(object data) except *:

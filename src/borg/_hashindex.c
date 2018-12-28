@@ -40,7 +40,20 @@ typedef struct {
 } HashIndex;
 
 
+#define DEBUG 0
+#define debug_print(fmt, ...)                   \
+  do {                                          \
+    if (DEBUG) {                                \
+      fprintf(stderr, fmt, __VA_ARGS__);        \
+      fflush(NULL);                             \
+    }                                           \
+  } while (0)
+
+#if DEBUG == 0
+#define DEBUG_SIZES
+#else
 #define DEBUG_SIZES 5,7,11,13,
+#endif
 
 /* prime (or w/ big prime factors) hash table sizes
  * not sure we need primes for borg's usage (as we have a hash function based
@@ -87,16 +100,6 @@ static int hash_sizes[] = { DEBUG_SIZES
 #define EPRINTF_MSG_PATH(path, msg, ...) fprintf(stderr, "hashindex: %s: " msg "\n", path, ##__VA_ARGS__)
 #define EPRINTF(msg, ...) fprintf(stderr, "hashindex: " msg "(%s)\n", ##__VA_ARGS__, strerror(errno))
 #define EPRINTF_PATH(path, msg, ...) fprintf(stderr, "hashindex: %s: " msg " (%s)\n", path, ##__VA_ARGS__, strerror(errno))
-
-
-#define DEBUG 0
-#define debug_print(fmt, ...)                   \
-  do {                                          \
-    if (DEBUG) {                                \
-      fprintf(stderr, fmt, __VA_ARGS__);        \
-      fflush(NULL);                             \
-    }                                           \
-  } while (0)
 
 
 #ifndef BORG_NO_PYTHON
@@ -178,6 +181,8 @@ hashindex_resize(HashIndex *index, int capacity)
     HashIndex *new;
     void *key = NULL;
     int32_t key_size = index->key_size;
+
+    debug_print("resize to %d \n", capacity);
 
     if(!(new = hashindex_init(capacity, key_size, index->value_size))) {
         return 0;
@@ -552,6 +557,9 @@ hashindex_get_key(HashIndex *index, int bucket_idx)
     if(bucket_idx < 0 || bucket_idx >= index->num_buckets) {
         return NULL;
     }
+    if(BUCKET_IS_EMPTY(index, bucket_idx)){
+      return NULL;
+    }
     return BUCKET_ADDR(index, bucket_idx);
 }
 
@@ -560,6 +568,9 @@ hashindex_get_value(HashIndex *index, int bucket_idx)
 {
     if(bucket_idx < 0 || bucket_idx >= index->num_buckets) {
         return NULL;
+    }
+    if(BUCKET_IS_EMPTY(index, bucket_idx)){
+      return NULL;
     }
     return BUCKET_ADDR(index, bucket_idx) + index->key_size;
 }
@@ -605,21 +616,32 @@ hashindex_set(HashIndex *index, const void *key, const void *value)
 
 
 inline int
-distance(int current_idx, int ideal_idx, int num_buckets)
+distance(int from_idx, int to_idx, int num_buckets)
 {
-    /* If the current index is smaller than the ideal index we've wrapped
-       around the end of the bucket array and need to compensate for that. */
-    return current_idx - ideal_idx + ( (current_idx < ideal_idx) ? num_buckets : 0 );
+    /* If from_idx is smaller than the to_idx we've wrapped
+       around the end of the bucket array and need to compensate for that.
+    */
+    return from_idx - to_idx + ( (from_idx < to_idx) ? num_buckets : 0 );
 }
 
 static int
 hashindex_delete(HashIndex *index, const void *key)
 {
+    /* No toombstones. We backshift the key/value pairs in case there was a collision.
+       To avoid a large number of memcpy calls we make an effort to not backshift every bucket,
+       but instead we track the bucket to be marked empty, and find the last viable candidate
+       for backshifting. Once we have the last viable candidate we backshift, and mark it's bucket
+       for deletion, rinse repeat untill we find an empty bucket.
+    */
     int marked, ideal_idx, candidate;
     int current_idx = hashindex_lookup(index, key, NULL);
+    int num_buckets = index->num_buckets;
 
     marked = current_idx;
-    candidate = current_idx;
+    candidate = current_idx+1;
+    if(candidate >= num_buckets){
+        candidate = 0;
+    }
 
     if (current_idx < 0) { // value not found, can't be deleted
         return -1;
@@ -627,14 +649,11 @@ hashindex_delete(HashIndex *index, const void *key)
 
     while(1) {
         debug_print("%s", "===========\n");
-        current_idx ++;
-        if (current_idx >= index->num_buckets)  // wrapparound
-            current_idx = 0;
-        debug_print("current %d\n", current_idx);
+        debug_print("current idx: %d\n", current_idx);
         if (BUCKET_IS_EMPTY(index, current_idx)) {
-            debug_print("%d is empty!\n", current_idx);
+            debug_print("%d is empty! we can stop now\n", current_idx);
             if (candidate != marked) {
-                debug_print("memcpy %d to %d!\n", candidate, marked);
+                debug_print("empty>backshifting %d to %d!\n", candidate, marked);
                 memcpy(BUCKET_ADDR(index, marked), BUCKET_ADDR(index, candidate), index->bucket_size);
                 marked = candidate;
             } else {
@@ -644,32 +663,38 @@ hashindex_delete(HashIndex *index, const void *key)
             // RC: what more?
         }
         ideal_idx = hashindex_index(index, BUCKET_ADDR(index, current_idx));
-        debug_print("ideal_idx = %d ", ideal_idx);
+        debug_print("ideal_idx = %d \n", ideal_idx);
+        debug_print("d(ci, i)=%d \n", distance(current_idx, ideal_idx, num_buckets));
         debug_print("marked = %d \n", marked);
+        debug_print("d(ci, m)=%d \n", distance(current_idx, marked, num_buckets));
 
-        if (ideal_idx > marked) {
-            debug_print("can't promote %d to %d\n", ideal_idx, marked);
+        if (distance(current_idx, marked, num_buckets) > distance(current_idx, ideal_idx, num_buckets)) {
+            debug_print("can't promote %d to %d\n", current_idx, marked);
             // propagate previous to marked
             if (candidate != marked) {
-                debug_print("memcpy %d to %d!\n", candidate, marked);
+                debug_print("backshifting %d to %d!\n", candidate, marked);
                 memcpy(BUCKET_ADDR(index, marked), BUCKET_ADDR(index, candidate), index->bucket_size);
-            // set marked to previous
+                // set marked to previous
                 marked = candidate;
                 debug_print("marked = %d!\n", candidate);
             } else {
                 debug_print("noop %d == %d\n", candidate, marked);
+                if (++current_idx >= num_buckets)  // wrapparound
+                    current_idx = 0;
             }
         } else {
+            debug_print("candidate at pos %d replaced by pos %d\n", candidate, current_idx);
             candidate = current_idx;
-            debug_print("current is new candidate %d \n", current_idx);
-            debug_print("candidate = %d!\n", candidate);
+            if (++current_idx >= num_buckets)  // wrapparound
+                current_idx = 0;
+            /* debug_print("%d is new candidate\n", current_idx); */
         }
     }
-    debug_print("MARK_EMPTY = %d!\n", marked);
+    debug_print("marking %d as empty!\n", marked);
     BUCKET_MARK_EMPTY(index, marked);
     index->num_entries -= 1;
     if(index->num_entries < index->lower_limit) {
-        if(!hashindex_resize(index, shrink_size(index->num_buckets))) {
+        if(!hashindex_resize(index, shrink_size(num_buckets))) {
             return 0;
         }
     }
